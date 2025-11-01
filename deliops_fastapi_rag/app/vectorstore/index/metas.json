@@ -1,0 +1,21 @@
+[
+  {
+    "id": "Bf9wprj8ks4IXZjEwzuI",
+    "name": "Mac & Cheese",
+    "category": "core",
+    "qty": 5,
+    "price": 5.99,
+    "raw": {
+      "price": {
+        "current": 5.99
+      },
+      "uom": "ea",
+      "active": true,
+      "service": "hot",
+      "groups": [
+        "LATE_NIGHT_DEALS"
+      ],
+      "category": "core",
+      "type": "prepared",
+      "id": "Bf9wprj8ks4IXZjEwzuI",
+      "createdAt": 
