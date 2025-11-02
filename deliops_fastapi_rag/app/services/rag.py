@@ -1,6 +1,7 @@
 # app/services/rag.py
 from __future__ import annotations
-from typing import List, Dict, Any, Tuple, Optional
+
+from typing import List, Dict, Any, Optional
 import os
 from textwrap import dedent
 import numpy as np
@@ -17,18 +18,23 @@ try:
 except Exception:
     InferenceClient = None
 
-INDEX_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "vectorstore", "index"))
+# Where the vector index lives on disk
+INDEX_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "vectorstore", "index")
+)
 
-# ---------- Store & name map ----------
+# ---------- Globals ----------
 _store: Optional[SimpleStore] = None
-_name_map: Dict[str, Dict[str, Any]] = {}     # canonical-name -> meta
+_name_map: Dict[str, Dict[str, Any]] = {}  # canonical-name -> meta
+
 
 def _get_store() -> SimpleStore:
     global _store
     if _store is None:
         _store = SimpleStore(INDEX_DIR)
-        _store.load()  # ok if empty; we’ll build when needed
+        _store.load()  # fine if empty; we will build on demand
     return _store
+
 
 def _rebuild_name_map(metas: List[Dict[str, Any]]) -> None:
     global _name_map
@@ -38,7 +44,8 @@ def _rebuild_name_map(metas: List[Dict[str, Any]]) -> None:
         if nm:
             _name_map[nm] = m
 
-# ---------- Rules ----------
+
+# ---------- Store rules / direct answers ----------
 STORE_RULES = {
     "hours": {"open": "6:00 AM", "close": "12:00 AM"},
     "hot_sandwich_cutoff": "11:00 PM",
@@ -46,31 +53,40 @@ STORE_RULES = {
     "late_deals_note": "Some items go on sale after 10 PM.",
 }
 
+
 def _rules_answer(q: ParsedQuery) -> Optional[str]:
-    # Be lenient with greetings
+    # Friendly small talk
     if q.is_greeting:
-        return "Hi there! How can I help—availability, prices, or late-night deals?"
+        return "Hi there! How can I help you today? I can check availability, prices, or late-night deals."
 
     if q.is_thanks and not (q.ask_hours or q.ask_deals or q.ask_price or q.ask_count or q.item):
-        return "You’re very welcome! If you need anything else, I’m right here."
+        return "You are very welcome. If you need anything else, I am right here."
 
     if q.is_goodbye and not (q.ask_hours or q.ask_deals or q.ask_price or q.ask_count or q.item):
-        return "Thanks for stopping by—have a great day!"
+        return "Thanks for stopping by. Have a great day."
 
+    # House rules
     if q.ask_hours:
-        return (f"We’re open from {STORE_RULES['hours']['open']} to {STORE_RULES['hours']['close']}. "
-                f"Hot sandwiches stop at {STORE_RULES['hot_sandwich_cutoff']}; after that, only cold sandwiches are available.")
+        return (
+            f"We are open from {STORE_RULES['hours']['open']} to {STORE_RULES['hours']['close']}. "
+            f"Hot sandwiches are served until {STORE_RULES['hot_sandwich_cutoff']}. After that, only cold sandwiches are available."
+        )
     if q.ask_hotcold:
-        return (f"Hot sandwiches are served until {STORE_RULES['hot_sandwich_cutoff']}. "
-                "After that time, we offer cold sandwiches.")
+        return (
+            f"Hot sandwiches are served until {STORE_RULES['hot_sandwich_cutoff']}. "
+            "After that time we offer cold sandwiches."
+        )
     if q.ask_deals:
-        return (f"Late-night deals start at {STORE_RULES['late_deals_start']}. "
-                f"{STORE_RULES['late_deals_note']}")
+        return (
+            f"Late-night deals start at {STORE_RULES['late_deals_start']}. "
+            f"{STORE_RULES['late_deals_note']}"
+        )
     return None
 
-# ---------- Build/refresh index ----------
+
+# ---------- Build / refresh index ----------
 def build_index() -> dict:
-    # IMPORTANT: include *everything* so ingredients like “turkey” are searchable
+    """Build the vector index from the full item list (prepared + ingredients)."""
     items = list_items(public=None, active=None)
 
     texts: List[str] = []
@@ -78,26 +94,30 @@ def build_index() -> dict:
 
     for it in items:
         name = it.get("name", "")
-        typ  = it.get("type") or "item"        # prepared / ingredient / packaged...
-        svc  = it.get("service") or "none"     # hot / cold / drink / none
+        typ = it.get("type") or "item"         # prepared / ingredient / packaged ...
+        svc = it.get("service") or "none"      # hot / cold / drink / none
         totals = it.get("totals") or {}
-        qty  = totals.get("totalQty")
+        qty = totals.get("totalQty")
         price = (it.get("price") or {}).get("current")
 
         desc = f"{name} | Type: {typ} | Service: {svc}"
-        if isinstance(qty, int):   desc += f" | In stock: {qty}"
-        if price is not None:      desc += f" | Price: ${float(price):.2f}"
+        if isinstance(qty, int):
+            desc += f" | In stock: {qty}"
+        if price is not None:
+            desc += f" | Price: ${float(price):.2f}"
 
         texts.append(desc)
-        metas.append({
-            "id": it.get("id"),
-            "name": name,
-            "type": typ,
-            "service": svc,
-            "qty": qty,
-            "price": price,
-            "raw": it,
-        })
+        metas.append(
+            {
+                "id": it.get("id"),
+                "name": name,
+                "type": typ,
+                "service": svc,
+                "qty": qty,
+                "price": price,
+                "raw": it,
+            }
+        )
 
     vecs = embed_texts(texts) if texts else np.zeros((0, 384), np.float32)
     store = _get_store()
@@ -106,6 +126,7 @@ def build_index() -> dict:
     _rebuild_name_map(metas)
     return {"ok": True, "count": len(metas)}
 
+
 def ensure_index_ready() -> None:
     s = _get_store()
     if s.emb is None or len(s.metas) == 0:
@@ -113,7 +134,8 @@ def ensure_index_ready() -> None:
     elif not _name_map:
         _rebuild_name_map(s.metas)
 
-# ---------- HF polish (optional) ----------
+
+# ---------- Optional HF polish ----------
 def _hf_client() -> Optional[InferenceClient]:
     if InferenceClient is None:
         return None
@@ -125,17 +147,23 @@ def _hf_client() -> Optional[InferenceClient]:
     except Exception:
         return None
 
+
 def _rewrite_with_hf(context: str, user: str, draft: str) -> Optional[str]:
+    """Ask the configured HF instruct model to lightly polish the draft."""
     client = _hf_client()
     if client is None:
         return None
 
-    system = dedent("""\
-        You are a friendly deli assistant. ONLY use facts found in CONTEXT.
-        Never invent items, prices, or hours. If missing, say you don't have it.
-        Keep answers short (1–3 sentences), polite, and specific.
-    """)
-    prompt = dedent(f"""\
+    system = dedent(
+        """\
+        You are a friendly deli assistant. Use only facts from CONTEXT.
+        Never invent items, prices, or hours. If something is missing, say so.
+        Keep answers short (one to three sentences), clear, and polite.
+        Avoid em dashes and semicolons.
+        """
+    )
+    prompt = dedent(
+        f"""\
         [SYSTEM]
         {system}
 
@@ -149,29 +177,51 @@ def _rewrite_with_hf(context: str, user: str, draft: str) -> Optional[str]:
         {draft}
 
         [ASSISTANT]
-    """)
+        """
+    )
     try:
-        out = client.text_generation(prompt, max_new_tokens=160, temperature=0.2,
-                                     do_sample=False, return_full_text=False)
+        out = client.text_generation(
+            prompt, max_new_tokens=160, temperature=0.2, do_sample=False, return_full_text=False
+        )
         return (out or "").strip()
     except Exception:
         return None
 
-# ---------- Helpers ----------
-def _format_item_line(meta: Dict[str, Any]) -> str:
-    name  = meta.get("name", "This item")
-    qty   = meta.get("qty")
+
+# ---------- Helpers: natural sentences ----------
+def _format_item_sentence(meta: Dict[str, Any]) -> str:
+    """
+    Return a clean, friendly sentence about a single item.
+    Examples:
+      - "Beef is available. We have 4 in stock."
+      - "Pork is currently sold out."
+      - "Mac & Cheese is available. We have 5 in stock. It costs $5.99 plus tax."
+    """
+    name = meta.get("name", "This item")
+    qty = meta.get("qty")
     price = meta.get("price")
-    parts = [name]
+
+    parts: List[str] = []
+
     if isinstance(qty, int):
-        parts.append(f"{qty} in stock" if qty > 0 else "out of stock")
+        if qty > 0:
+            parts.append(f"{name} is available.")
+            parts.append(f"We have {qty} in stock.")
+        else:
+            parts.append(f"{name} is currently sold out.")
+    else:
+        parts.append(f"{name}.")
+
     if price is not None:
-        parts.append(f"${float(price):.2f} plus tax")
-    return " — ".join(parts)
+        parts.append(f"It costs ${float(price):.2f} plus tax.")
+
+    return " ".join(parts)
+
 
 def _exact_or_contains_lookup(user_text: str) -> Optional[Dict[str, Any]]:
     """
-    First try exact-name match; then a conservative 'contains' match on word boundaries.
+    Try exact-name match first, then a conservative 'contains' match on word boundaries.
+    Handles short queries like "turkey?" or "beef".
     """
     if not _name_map:
         return None
@@ -181,7 +231,7 @@ def _exact_or_contains_lookup(user_text: str) -> Optional[Dict[str, Any]]:
     if q in _name_map:
         return _name_map[q]
 
-    # word-boundary contains (e.g., "do you have turkey?" -> "turkey")
+    # word-boundary contains
     tokens = re.findall(r"[a-zA-Z][a-zA-Z\-\& ]+", q)
     cand = " ".join(tokens).strip()
     for nm, meta in _name_map.items():
@@ -189,60 +239,78 @@ def _exact_or_contains_lookup(user_text: str) -> Optional[Dict[str, Any]]:
             return meta
     return None
 
+
 # ---------- Main QA ----------
-def answer_from_items(question: str, history: Optional[List[Dict[str,str]]] = None,
-                      top_k: Optional[int] = None) -> str:
+def answer_from_items(
+    question: str, history: Optional[List[Dict[str, str]]] = None, top_k: Optional[int] = None
+) -> str:
     ensure_index_ready()
     s = _get_store()
     if s.emb is None or len(s.metas) == 0:
-        return "I don’t see any items yet."
+        return "I do not see any items yet."
 
-    # 0) quick rules/greetings
+    # 0) quick rules and small talk
     q = parse_query(question)
     rule = _rules_answer(q)
     if rule:
         return rule
 
-    # 1) very fast exact lookup by name (handles “turkey?”, “beef?”, etc.)
+    # 1) exact / contains name lookup first (fast and reliable)
     meta = _exact_or_contains_lookup(question)
     if meta:
         if q.ask_count and isinstance(meta.get("qty"), int):
-            return f"{meta['name']} — we have {meta['qty']} in stock."
+            return (
+                f"{meta['name']} is available. We have {meta['qty']} in stock."
+                if meta["qty"] > 0
+                else f"{meta['name']} is currently sold out."
+            )
         if q.ask_price and meta.get("price") is not None:
-            return f"{meta['name']} is {float(meta['price']):.2f} dollars plus tax."
-        # default single-item answer, with a couple of similar suggestions via semantic
+            return f"{meta['name']} costs ${float(meta['price']):.2f} plus tax."
+
         qv = embed_text(meta["name"])
         hits = s.search(qv, top_k=3)
         alts = [m["name"] for _, m in hits if m is not meta][:2]
-        draft = _format_item_line(meta) + (f". You might also like: {', '.join(alts)}." if alts else ".")
-        ctx = "\n".join([_format_item_line(m) for _, m in hits])
+
+        draft = _format_item_sentence(meta)
+        if alts:
+            draft += f" You might also like: {', '.join(alts)}."
+
+        ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
         better = _rewrite_with_hf(ctx, question, draft)
         return better or draft
 
-    # 2) semantic search by the full question
+    # 2) semantic search on the full question
     vec = embed_text(question)
     hits = s.search(vec, top_k=int(top_k or settings.rag_top_k))
     if hits:
         top = hits[0][1]
-        # tailor
+
         if q.ask_count and isinstance(top.get("qty"), int):
-            return f"{top['name']} — we have {top['qty']} in stock."
+            return (
+                f"{top['name']} is available. We have {top['qty']} in stock."
+                if top["qty"] > 0
+                else f"{top['name']} is currently sold out."
+            )
         if q.ask_price and top.get("price") is not None:
-            return f"{top['name']} is {float(top['price']):.2f} dollars plus tax."
-        # default
+            return f"{top['name']} costs ${float(top['price']):.2f} plus tax."
+
         alts = [m["name"] for _, m in hits[1:3]]
-        draft = _format_item_line(top) + (f". You might also like: {', '.join(alts)}." if alts else ".")
-        ctx = "\n".join([_format_item_line(m) for _, m in hits])
+        draft = _format_item_sentence(top)
+        if alts:
+            draft += f" You might also like: {', '.join(alts)}."
+
+        ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
         better = _rewrite_with_hf(ctx, question, draft)
         return better or draft
 
-    # 3) generic availability fallback
+    # 3) generic availability fallback (short, friendly list)
     metas = s.metas
     in_stock = [m for m in metas if isinstance(m.get("qty"), int) and m["qty"] > 0]
     show = in_stock[:6] if in_stock else metas[:6]
     if not show:
-        return "Right now I don’t see any items in stock."
-    lines = [_format_item_line(m) for m in show]
-    draft = "Here’s what’s available:\n- " + "\n- ".join(lines)
+        return "Right now I do not see any items in stock."
+
+    lines = [_format_item_sentence(m) for m in show]
+    draft = "Here is what I can serve right now:\n- " + "\n- ".join(lines)
     better = _rewrite_with_hf("\n".join(lines), question, draft)
     return better or draft
