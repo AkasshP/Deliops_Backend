@@ -1,4 +1,3 @@
-# app/settings.py
 from __future__ import annotations
 from typing import List, Optional
 from pydantic import Field, AliasChoices
@@ -32,7 +31,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_ignore_empty=True,
-        extra="ignore",   # ignore unknown env keys instead of raising
+        extra="ignore",
     )
 
     # --- API ---
@@ -69,6 +68,14 @@ class Settings(BaseSettings):
         default=4, validation_alias=AliasChoices("RAG_TOP_K",)
     )
 
+    # --- Vector index location ---
+    # Render Free: /tmp/index (ephemeral)
+    # With disk / Cloud Run: set INDEX_DIR=/var/data/index (or a writable path)
+    index_dir: str = Field(
+        default="/tmp/index",
+        validation_alias=AliasChoices("INDEX_DIR",),
+    )
+
     @property
     def cors_origins(self) -> List[str]:
         return _parse_cors(self.cors_origins_raw)
@@ -76,6 +83,6 @@ class Settings(BaseSettings):
 # singleton
 settings = Settings()
 
-# Make sure GOOGLE_APPLICATION_CREDENTIALS is exported for firebase_admin
+# Export GCP creds for firebase_admin if provided
 if settings.google_application_credentials:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials

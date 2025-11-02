@@ -1,4 +1,3 @@
-# app/vectorstore/simple_store.py
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
 import os, json
@@ -31,14 +30,18 @@ class SimpleStore:
         os.makedirs(self.dir, exist_ok=True)
         epath = os.path.join(self.dir, "embeddings.npy")
         mpath = os.path.join(self.dir, "metas.json")
-        np.save(epath, self.emb.astype(np.float32))
+        np.save(epath, self.emb.astype(np.float32) if self.emb is not None else np.zeros((0, 384), np.float32))
         with open(mpath, "w", encoding="utf-8") as f:
             json.dump(self.metas, f, ensure_ascii=False, indent=2)
 
     # ---------- building ----------
     def build(self, vectors: np.ndarray, metas: List[Dict[str, Any]]) -> None:
-        assert vectors.shape[0] == len(metas)
-        # Ensure normalized vectors for cosine ~ dot
+        if vectors.shape[0] != len(metas):
+            raise ValueError("vectors and metas length mismatch")
+        if vectors.size == 0:
+            self.emb = np.zeros((0, 384), np.float32)
+            self.metas = []
+            return
         norms = np.linalg.norm(vectors, axis=1, keepdims=True) + 1e-10
         self.emb = (vectors / norms).astype(np.float32)
         self.metas = metas
