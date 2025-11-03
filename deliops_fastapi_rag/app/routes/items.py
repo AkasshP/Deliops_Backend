@@ -14,17 +14,14 @@ from ..services.items import (
 
 router = APIRouter(prefix="/items", tags=["items"])
 
-
-# ---- Pydantic models ---------------------------------------------------------
+# ---------- Models ----------
 class Price(BaseModel):
     current: float = Field(..., description="Current price")
-
 
 class Totals(BaseModel):
     floorQty: int = 0
     backQty: int = 0
     totalQty: int = 0
-
 
 class ItemIn(BaseModel):
     id: Optional[str] = None
@@ -37,27 +34,41 @@ class ItemIn(BaseModel):
     active: Optional[bool] = True
     price: Optional[Price] = None
     totals: Optional[Totals] = None
-
+    imageUrl: Optional[str] = None
 
 class ItemOut(ItemIn):
     id: str
 
+# PATCH-specific schema: every field optional (including nested)
+class PricePatch(BaseModel):
+    current: Optional[float] = None
 
-# ---- Helpers -----------------------------------------------------------------
-def _coerce_out(items: List[Dict[str, Any]]) -> List[ItemOut]:
-    return [ItemOut(**{**i, "id": i["id"]}) for i in items if "id" in i]
+class TotalsPatch(BaseModel):
+    floorQty: Optional[int] = None
+    backQty: Optional[int] = None
+    totalQty: Optional[int] = None
 
+class ItemPatch(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    type: Optional[str] = None
+    service: Optional[str] = None
+    uom: Optional[str] = None
+    category: Optional[str] = None
+    public: Optional[bool] = None
+    active: Optional[bool] = None
+    price: Optional[PricePatch] = None
+    totals: Optional[TotalsPatch] = None
+    imageUrl: Optional[str] = None
 
-# ---- Routes ------------------------------------------------------------------
-# GET /items   and   GET /items/
+# ---------- Routes ----------
+
 @router.get("", response_model=List[ItemOut])
-def list_items_endpoint(
-    public: Optional[bool] = Query(None),
-    active: Optional[bool] = Query(None),
-):
-    return _coerce_out(list_items(public=public, active=active))
+@router.get("/", response_model=List[ItemOut])
+def list_items_endpoint(public: Optional[bool] = Query(None),
+                        active: Optional[bool] = Query(None)):
+    return [ItemOut(**i) for i in list_items(public=public, active=active)]
 
-# GET /items/{id}
 @router.get("/{item_id}", response_model=ItemOut)
 def get_item_endpoint(item_id: str):
     item = get_item(item_id)
@@ -65,8 +76,8 @@ def get_item_endpoint(item_id: str):
         raise HTTPException(status_code=404, detail="item not found")
     return ItemOut(**item)
 
-# POST /items    and   POST /items/
-@router.post("/", response_model=ItemOut)
+# IMPORTANT: allow both "" and "/" for POST (your file had two identical "/" decorators)
+@router.post("", response_model=ItemOut)
 @router.post("/", response_model=ItemOut)
 def create_item_endpoint(payload: ItemIn):
     try:
@@ -75,13 +86,12 @@ def create_item_endpoint(payload: ItemIn):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# PATCH /items/{id}
 @router.patch("/{item_id}", response_model=ItemOut)
-def update_item_endpoint(item_id: str, payload: ItemIn):
-    updated = update_item(item_id, payload.model_dump(exclude_unset=True))
+def update_item_endpoint(item_id: str, payload: ItemPatch):
+    data = payload.model_dump(exclude_unset=True, exclude_none=True)
+    updated = update_item(item_id, data)
     return ItemOut(**updated)
 
-# DELETE /items/{id}
 @router.delete("/{item_id}")
 def delete_item_endpoint(item_id: str):
     delete_item(item_id)
