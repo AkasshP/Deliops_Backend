@@ -1,178 +1,85 @@
+# app/services/nlu.py
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, List, Dict, Set, Tuple
-import re
-import time
 
-from .items import list_items
+from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
 class ParsedQuery:
-    # small intents
+    text: str
+
+    # small-talk
     is_greeting: bool = False
     is_thanks: bool = False
     is_goodbye: bool = False
 
-    # question intents
-    ask_hours: bool = False
-    ask_deals: bool = False
-    ask_price: bool = False
-    ask_count: bool = False
-    ask_hotcold: bool = False
+    # intents
+    ask_hours: bool = False         # store hours
+    ask_deals: bool = False         # late-night deals / promos
+    ask_price: bool = False         # price of an item
+    ask_count: bool = False         # how many in stock
+    ask_hotcold: bool = False       # hot vs cold sandwiches
 
-    # target (canonical item name if detected)
+    is_order_request: bool = False   # “can you place 2 turkey sandwich”
+    is_order_confirm: bool = False   # “yes, confirm the order”
+
+    # free-text item name if we can guess it
     item: Optional[str] = None
 
 
-# -------------------------------
-# Inventory name cache (lazy)
-# -------------------------------
-
-# Cache item names for ~60s to avoid hitting Firestore every turn when under load
-_NAME_CACHE: Dict[str, object] = {
-    "names": set(),   # type: ignore[assignment]
-    "stamp": 0.0,
-}
-
-_CACHE_TTL = 60.0  # seconds
-
-
-def _load_inventory_names() -> Set[str]:
-    now = time.time()
-    names: Set[str] = _NAME_CACHE.get("names", set())  # type: ignore[assignment]
-    stamp: float = _NAME_CACHE.get("stamp", 0.0)        # type: ignore[assignment]
-
-    if names and now - stamp < _CACHE_TTL:
-        return names
-
-    try:
-        docs = list_items(public=True, active=True)
-        fresh: Set[str] = set()
-        for d in docs:
-            n = (d.get("name") or "").strip()
-            if n:
-                fresh.add(n)
-        if fresh:
-            _NAME_CACHE["names"] = fresh
-            _NAME_CACHE["stamp"] = now
-            return fresh
-    except Exception:
-        pass
-
-    return names or set()
-
-
-# -------------------------------
-# Simple helpers
-# -------------------------------
-
-_PUNCT_RE = re.compile(r"[^\w\s&'\-]+", re.UNICODE)
-_WS_RE = re.compile(r"\s+", re.UNICODE)
-
-
-def _normalize(s: str) -> str:
-    s = s.strip().lower()
-    s = _PUNCT_RE.sub(" ", s)
-    s = _WS_RE.sub(" ", s)
-    return s.strip()
-
-
-def _wboundary_contains(text: str, needle: str) -> bool:
-    """
-    Word-boundary-ish contains (works for multi-word names).
-    Example: text="do you have turkey?" needle="turkey" -> True
-    """
-    # escape regex special chars in needle words
-    pattern = r"\b" + re.escape(needle) + r"\b"
-    return re.search(pattern, text) is not None
-
-
-def _best_item_match(msg: str, inv_names: Set[str]) -> Optional[str]:
-    """
-    Choose a canonical inventory name from `inv_names` that best matches `msg`.
-    Strategy:
-      1) exact word-boundary match (multi-word OK)
-      2) fallback: containment either way for robustness ("tenders" ~ "Chicken tenders")
-      3) tie-break by longest name
-    """
-    if not msg or not inv_names:
-        return None
-
-    msg_n = _normalize(msg)
-
-    # Prepare normalized mapping
-    norm_to_orig: Dict[str, str] = {}
-    for n in inv_names:
-        nn = _normalize(n)
-        if nn:
-            norm_to_orig[nn] = n
-
-    candidates: List[Tuple[int, str, str]] = []  # (score, norm_name, orig_name)
-
-    for nn, orig in norm_to_orig.items():
-        # 1) word-boundary exact match
-        if _wboundary_contains(msg_n, nn):
-            # higher score = better; longer wins
-            candidates.append((3, nn, orig))
-            continue
-
-        # 2) soft containment (either direction), but avoid super-short overlaps
-        if (len(nn) >= 3 and (nn in msg_n or msg_n in nn)):
-            candidates.append((2, nn, orig))
-            continue
-
-        # 3) very soft: overlapping token sets
-        msg_tokens = set(msg_n.split())
-        name_tokens = set(nn.split())
-        if msg_tokens & name_tokens:
-            candidates.append((1, nn, orig))
-
-    if not candidates:
-        return None
-
-    # sort by (score desc, length desc) then pick top
-    candidates.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
-    return candidates[0][2]
-
-
-# -------------------------------
-# Public parse function
-# -------------------------------
-
 def parse_query(text: str) -> ParsedQuery:
-    pq = ParsedQuery()
+    """
+    Very simple keyword-based NLU that is 'good enough' for the deli bot.
+    The RAG layer still controls the actual answer.
+    """
+    t = (text or "").strip()
+    tl = t.lower()
 
-    if not text:
-        return pq
+    pq = ParsedQuery(text=t)
 
-    t = text.strip().lower()
-
-    # --- small intents ---
-    if re.search(r"\b(hi|hello|hey|yo|good\s+morning|good\s+afternoon|good\s+evening)\b", t):
+    # --- small talk ---
+    if any(w in tl for w in ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]):
         pq.is_greeting = True
-    if re.search(r"\b(thanks|thank\s+you|ty|appreciate\s+it)\b", t):
+    if "thank" in tl or "thx" in tl:
         pq.is_thanks = True
-    if re.search(r"\b(bye|goodbye|see\s+ya|see\s+you|later)\b", t):
+    if any(w in tl for w in ["bye", "goodbye", "see you", "see ya", "later"]):
         pq.is_goodbye = True
 
-    # --- question intents ---
-    if re.search(r"\b(hours?|open|close|opening|closing|when.*(open|close))\b", t):
+    # --- store info / rules ---
+    if any(w in tl for w in ["hour", "open", "close", "closing time", "closing-time"]):
         pq.ask_hours = True
-    if re.search(r"\b(deals?|specials?|offers?|discounts?)\b", t):
+    if any(w in tl for w in ["deal", "offer", "promo", "discount", "late night", "late-night"]):
         pq.ask_deals = True
-    if re.search(r"(\$|\b(price|cost|how\s+much|rate|charges?)\b)", t):
-        pq.ask_price = True
-    if re.search(r"\b(how\s+many|in\s+stock|available|qty|quantity|left)\b", t):
-        pq.ask_count = True
-    if re.search(r"\b(hot|cold)\b", t) and not pq.ask_hours:  # avoid 'hot hours' false positives
+    if any(w in tl for w in ["hot sandwich", "cold sandwich", "hot or cold", "hot vs cold"]):
         pq.ask_hotcold = True
 
-    # --- item detection ---
-    # Try best match against current public item names
-    inv = _load_inventory_names()
-    item = _best_item_match(text, inv)
-    if item:
-        pq.item = item
+    # --- item-centric questions ---
+    if any(w in tl for w in ["price", "cost", "how much", "$"]):
+        pq.ask_price = True
+    if any(w in tl for w in ["how many", "quantity", "qty", "in stock", "left", "available"]):
+        pq.ask_count = True
+
+    if any(w in tl for w in ["place my order", "place the order", "order this", "order now",
+                             "i want to order", "can you place", "can you order", "add to my order"]):
+        pq.is_order_request = True
+
+    if any(w in tl for w in ["confirm my order", "confirm the order",
+                             "yes go ahead", "yes place it", "looks good, place it"]):
+        pq.is_order_confirm = True
+
+    # crude guess for an "item name" substring
+    # everything before '?' or 'price' / 'cost' etc. tends to be the item.
+    # This is optional; RAG still does semantic search.
+    possible = t
+    for sep in ["?", " price", " cost", " how much"]:
+        idx = possible.lower().find(sep)
+        if idx > 0:
+            possible = possible[:idx]
+            break
+
+    possible = possible.strip()
+    if possible and len(possible.split()) <= 6:
+        pq.item = possible
 
     return pq

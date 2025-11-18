@@ -7,16 +7,13 @@ from textwrap import dedent
 import numpy as np
 import re
 
+from openai import OpenAI
+
 from ..settings import settings
 from .embeddings import embed_texts, embed_text
 from ..vectorstore.simple_store import SimpleStore
 from .items import list_items
 from .nlu import parse_query, ParsedQuery
-
-try:
-    from huggingface_hub import InferenceClient
-except Exception:
-    InferenceClient = None
 
 # Where the vector index lives on disk
 INDEX_DIR = os.path.abspath(
@@ -26,6 +23,7 @@ INDEX_DIR = os.path.abspath(
 # ---------- Globals ----------
 _store: Optional[SimpleStore] = None
 _name_map: Dict[str, Dict[str, Any]] = {}  # canonical-name -> meta
+_llm_client: Optional[OpenAI] = None
 
 
 def _get_store() -> SimpleStore:
@@ -43,6 +41,22 @@ def _rebuild_name_map(metas: List[Dict[str, Any]]) -> None:
         nm = (m.get("name") or "").strip().lower()
         if nm:
             _name_map[nm] = m
+
+
+def _get_llm_client() -> Optional[OpenAI]:
+    """
+    Lazily construct an OpenAI client, or return None if not configured.
+    """
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
+
+    if not settings.openai_api_key:
+        # LLM polish is optional; if no key, we just skip it.
+        return None
+
+    _llm_client = OpenAI(api_key=settings.openai_api_key)
+    return _llm_client
 
 
 # ---------- Store rules / direct answers ----------
@@ -135,56 +149,62 @@ def ensure_index_ready() -> None:
         _rebuild_name_map(s.metas)
 
 
-# ---------- Optional HF polish ----------
-def _hf_client() -> Optional[InferenceClient]:
-    if InferenceClient is None:
-        return None
-    ak = settings.huggingface_api_key
-    if not ak:
-        return None
-    try:
-        return InferenceClient(api_key=ak, model=settings.hf_model_id, timeout=25)
-    except Exception:
-        return None
-
-
-def _rewrite_with_hf(context: str, user: str, draft: str) -> Optional[str]:
-    """Ask the configured HF instruct model to lightly polish the draft."""
-    client = _hf_client()
+# ---------- LLM “polish” using OpenAI ----------
+def _rewrite_with_llm(context: str, user: str, draft: str) -> Optional[str]:
+    """
+    Ask the configured OpenAI chat model to lightly polish the draft.
+    Keeps it grounded in CONTEXT and store rules.
+    """
+    client = _get_llm_client()
     if client is None:
         return None
 
     system = dedent(
         """\
-        You are a friendly deli assistant. Use only facts from CONTEXT.
+        You are a friendly deli assistant for Huskies Deli.
+        Use only facts from CONTEXT and from the store rules in the prompt.
         Never invent items, prices, or hours. If something is missing, say so.
         Keep answers short (one to three sentences), clear, and polite.
         Avoid em dashes and semicolons.
         """
     )
-    prompt = dedent(
-        f"""\
-        [SYSTEM]
-        {system}
 
-        [CONTEXT]
-        {context}
+    messages = [
+        {
+            "role": "system",
+            "content": system,
+        },
+        {
+            "role": "user",
+            "content": dedent(
+                f"""\
+                CONTEXT:
+                {context}
 
-        [USER]
-        {user}
+                USER QUESTION:
+                {user}
 
-        [DRAFT]
-        {draft}
+                DRAFT ANSWER:
+                {draft}
 
-        [ASSISTANT]
-        """
-    )
+                Please rewrite the DRAFT ANSWER so it is natural, clear English,
+                grounded only in the CONTEXT. If draft is already good, keep it almost the same.
+                """
+            ),
+        },
+    ]
+
     try:
-        out = client.text_generation(
-            prompt, max_new_tokens=160, temperature=0.2, do_sample=False, return_full_text=False
+        resp = client.chat.completions.create(
+            model=settings.openai_model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=200,
         )
-        return (out or "").strip()
+        out = resp.choices[0].message.content or ""
+        return out.strip()
     except Exception:
+        # If anything goes wrong, just fall back to the original draft.
         return None
 
 
@@ -276,7 +296,7 @@ def answer_from_items(
             draft += f" You might also like: {', '.join(alts)}."
 
         ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
-        better = _rewrite_with_hf(ctx, question, draft)
+        better = _rewrite_with_llm(ctx, question, draft)
         return better or draft
 
     # 2) semantic search on the full question
@@ -300,7 +320,7 @@ def answer_from_items(
             draft += f" You might also like: {', '.join(alts)}."
 
         ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
-        better = _rewrite_with_hf(ctx, question, draft)
+        better = _rewrite_with_llm(ctx, question, draft)
         return better or draft
 
     # 3) generic availability fallback (short, friendly list)
@@ -312,5 +332,66 @@ def answer_from_items(
 
     lines = [_format_item_sentence(m) for m in show]
     draft = "Here is what I can serve right now:\n- " + "\n- ".join(lines)
-    better = _rewrite_with_hf("\n".join(lines), question, draft)
+    better = _rewrite_with_llm("\n".join(lines), question, draft)
     return better or draft
+
+from openai import OpenAI
+client = OpenAI(api_key=settings.openai_api_key)
+
+def extract_order_lines_with_gpt(
+    user_text: str,
+    known_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Use GPT-3.5 to turn free-text into a list of {name, qty} lines.
+    Returns [] if it can't confidently detect an order.
+    """
+    # keep only item names so the model snaps to your real menu
+    menu_names = [it.get("name", "") for it in known_items if it.get("name")]
+
+    system = (
+        "You are an ordering assistant for a deli.\n"
+        "User text may be messy (typos, extra words).\n"
+        "Your job is ONLY to extract what they are trying to order.\n"
+        "Use the MENU list to match item names. If nothing is being ordered, "
+        "return an empty list.\n"
+        "Always respond with pure JSON: {\"lines\":[{\"name\":...,\"qty\":...}, ...]}."
+    )
+
+    menu_str = ", ".join(menu_names)
+    prompt = (
+        f"MENU ITEMS: {menu_str}\n\n"
+        f"USER: {user_text}\n\n"
+        "Return JSON only."
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model=settings.openai_model or "gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+        )
+        raw = resp.choices[0].message.content or "{}"
+    except Exception:
+        return []
+
+    import json
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return []
+
+    lines = data.get("lines") or []
+    out: list[dict[str, Any]] = []
+    for ln in lines:
+        name = (ln.get("name") or "").strip()
+        try:
+            qty = int(ln.get("qty") or 0)
+        except Exception:
+            qty = 0
+        if name and qty > 0:
+            out.append({"name": name, "qty": qty})
+    return out

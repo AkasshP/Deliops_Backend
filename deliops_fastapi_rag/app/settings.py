@@ -5,6 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
 import os
 
+
 def _parse_cors(v: Optional[str | List[str]]) -> List[str]:
     """
     Accept JSON array (e.g. '["http://localhost:3000"]') or
@@ -26,6 +27,7 @@ def _parse_cors(v: Optional[str | List[str]]) -> List[str]:
         pass
     # fallback: comma separated
     return [p.strip() for p in s.split(",") if p.strip()]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -52,12 +54,13 @@ class Settings(BaseSettings):
     )
 
     # --- Hugging Face / RAG ---
-    huggingface_api_key: Optional[str] = Field(
-        default=None, validation_alias=AliasChoices("HUGGINGFACE_API_KEY",)
+    openai_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENAI_API_KEY"),
     )
-    hf_model_id: str = Field(
-        default="mistralai/Mistral-7B-Instruct-v0.3",
-        validation_alias=AliasChoices("HF_MODEL_ID",)
+    openai_model: str = Field(
+        default="gpt-3.5-turbo",
+        validation_alias=AliasChoices("OPENAI_MODEL"),
     )
     # accept either EMBED_MODEL or RAG_EMBED_MODEL
     embed_model: str = Field(
@@ -69,16 +72,24 @@ class Settings(BaseSettings):
     )
 
     # --- Vector index location ---
-    # Render Free: /tmp/index (ephemeral)
-    # With disk / Cloud Run: set INDEX_DIR=/var/data/index (or a writable path)
     index_dir: str = Field(
         default="/tmp/index",
         validation_alias=AliasChoices("INDEX_DIR",),
     )
 
+    stripe_secret_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_API_KEY"),
+    )
+    stripe_publishable_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("STRIPE_PUBLISHABLE_KEY",),
+    )
+
     @property
     def cors_origins(self) -> List[str]:
         return _parse_cors(self.cors_origins_raw)
+
 
 # singleton
 settings = Settings()
