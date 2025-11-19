@@ -64,9 +64,10 @@ class Settings(BaseSettings):
     )
     # accept either EMBED_MODEL or RAG_EMBED_MODEL
     embed_model: str = Field(
-        default="sentence-transformers/all-MiniLM-L6-v2",
-        validation_alias=AliasChoices("EMBED_MODEL", "RAG_EMBED_MODEL")
+    default="text-embedding-3-small",
+    validation_alias=AliasChoices("EMBED_MODEL", "RAG_EMBED_MODEL"),
     )
+
     rag_top_k: int = Field(
         default=4, validation_alias=AliasChoices("RAG_TOP_K",)
     )
