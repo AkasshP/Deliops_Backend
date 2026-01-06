@@ -1,7 +1,20 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
-import os, json
+from datetime import datetime
+import os
+import json
 import numpy as np
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        if hasattr(obj, '__str__'):
+            return str(obj)
+        return super().default(obj)
+
 
 class SimpleStore:
     """
@@ -32,7 +45,7 @@ class SimpleStore:
         mpath = os.path.join(self.dir, "metas.json")
         np.save(epath, self.emb.astype(np.float32) if self.emb is not None else np.zeros((0, 384), np.float32))
         with open(mpath, "w", encoding="utf-8") as f:
-            json.dump(self.metas, f, ensure_ascii=False, indent=2)
+            json.dump(self.metas, f, ensure_ascii=False, indent=2, cls=DateTimeEncoder)
 
     # ---------- building ----------
     def build(self, vectors: np.ndarray, metas: List[Dict[str, Any]]) -> None:

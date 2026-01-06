@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import List, Dict, Any, Optional
 import os
+import json
+import traceback
 from textwrap import dedent
 import numpy as np
 import re
@@ -12,7 +14,7 @@ from openai import OpenAI
 from ..settings import settings
 from .embeddings import embed_texts, embed_text
 from ..vectorstore.simple_store import SimpleStore
-from .items import list_items
+from .items import list_items, get_item
 from .nlu import parse_query, ParsedQuery
 
 # Where the vector index lives on disk
@@ -95,7 +97,28 @@ def _rules_answer(q: ParsedQuery) -> Optional[str]:
             f"Late-night deals start at {STORE_RULES['late_deals_start']}. "
             f"{STORE_RULES['late_deals_note']}"
         )
+    if q.ask_payment:
+        return "We accept cash and all major credit/debit cards including Visa, Mastercard, and American Express."
     return None
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    """Recursively convert Firestore-specific types to JSON-serializable types."""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    # Handle datetime-like objects (Firestore DatetimeWithNanoseconds, etc.)
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    # Handle GeoPoint and other Firestore types
+    if hasattr(obj, '__dict__'):
+        return str(obj)
+    return str(obj)
 
 
 # ---------- Build / refresh index ----------
@@ -129,7 +152,7 @@ def build_index() -> dict:
                 "service": svc,
                 "qty": qty,
                 "price": price,
-                "raw": it,
+                "raw": _sanitize_for_json(it),
             }
         )
 
@@ -141,13 +164,41 @@ def build_index() -> dict:
     return {"ok": True, "count": len(metas)}
 
 
-def ensure_index_ready() -> None:
-    s = _get_store()
-    if s.emb is None or len(s.metas) == 0:
-        build_index()
-    elif not _name_map:
-        _rebuild_name_map(s.metas)
+def ensure_index_ready(startup: bool = False) -> SimpleStore:
+    """
+    Ensure the vector index is loaded into memory.
+    - If it already exists: load it.
+    - If it's missing: build a fresh one.
+    - If something unexpected happens:
+        * during startup: re-raise (fail fast)
+        * during lazy calls: log and re-raise.
+    """
+    global _store
+    if _store is not None:
+        return _store
 
+    try:
+        store = _get_store()
+        # Check if store has data loaded
+        if store.emb is not None and len(store.metas) > 0:
+            print(f"[embeddings] Loaded existing index from {INDEX_DIR}")
+            _rebuild_name_map(store.metas)
+            return store
+
+        # No existing index or empty, build a new one
+        print(f"[embeddings] No index found or empty at {INDEX_DIR}, building new one...")
+        os.makedirs(INDEX_DIR, exist_ok=True)
+        result = build_index()
+        print(f"[embeddings] Built index with {result.get('count', 0)} items")
+        return _get_store()
+
+    except Exception:
+        traceback.print_exc()
+        if startup:
+            # During startup, fail fast so you see the error and fix it
+            raise
+        # During lazy use (inside /chat) you may want to re-raise as well:
+        raise
 
 # ---------- LLM “polish” using OpenAI ----------
 def _rewrite_with_llm(context: str, user: str, draft: str) -> Optional[str]:
@@ -260,11 +311,65 @@ def _exact_or_contains_lookup(user_text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _get_fresh_item_data(meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Fetch fresh item data from Firestore to get real-time qty and price.
+    Returns updated meta dict with current values.
+    """
+    item_id = meta.get("id")
+    if not item_id:
+        return meta
+
+    try:
+        fresh = get_item(item_id)
+        if fresh:
+            totals = fresh.get("totals") or {}
+            price_obj = fresh.get("price") or {}
+            return {
+                **meta,
+                "qty": totals.get("totalQty"),
+                "price": price_obj.get("current"),
+                "raw": fresh,
+            }
+    except Exception:
+        pass
+
+    return meta
+
+
+def _format_item_response(meta: Dict[str, Any], include_price: bool = True, include_qty: bool = True) -> str:
+    """
+    Format a response for an item with fresh data from Firestore.
+    """
+    # Get fresh data
+    fresh_meta = _get_fresh_item_data(meta)
+    name = fresh_meta.get("name", "This item")
+    qty = fresh_meta.get("qty")
+    price = fresh_meta.get("price")
+
+    parts: List[str] = []
+
+    # Stock info
+    if include_qty and isinstance(qty, int):
+        if qty > 0:
+            parts.append(f"{name} is available with {qty} in stock.")
+        else:
+            parts.append(f"{name} is currently out of stock.")
+    else:
+        parts.append(f"{name} is available.")
+
+    # Price info
+    if include_price and price is not None:
+        parts.append(f"It costs ${float(price):.2f} plus tax.")
+
+    return " ".join(parts)
+
+
 # ---------- Main QA ----------
 def answer_from_items(
     question: str, history: Optional[List[Dict[str, str]]] = None, top_k: Optional[int] = None
 ) -> str:
-    ensure_index_ready()
+    ensure_index_ready(startup=False)
     s = _get_store()
     if s.emb is None or len(s.metas) == 0:
         return "I do not see any items yet."
@@ -278,50 +383,18 @@ def answer_from_items(
     # 1) exact / contains name lookup first (fast and reliable)
     meta = _exact_or_contains_lookup(question)
     if meta:
-        if q.ask_count and isinstance(meta.get("qty"), int):
-            return (
-                f"{meta['name']} is available. We have {meta['qty']} in stock."
-                if meta["qty"] > 0
-                else f"{meta['name']} is currently sold out."
-            )
-        if q.ask_price and meta.get("price") is not None:
-            return f"{meta['name']} costs ${float(meta['price']):.2f} plus tax."
-
-        qv = embed_text(meta["name"])
-        hits = s.search(qv, top_k=3)
-        alts = [m["name"] for _, m in hits if m is not meta][:2]
-
-        draft = _format_item_sentence(meta)
-        if alts:
-            draft += f" You might also like: {', '.join(alts)}."
-
-        ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
-        better = _rewrite_with_llm(ctx, question, draft)
-        return better or draft
+        # Always get fresh data from Firestore for accurate stock/price
+        response = _format_item_response(meta)
+        return response
 
     # 2) semantic search on the full question
     vec = embed_text(question)
     hits = s.search(vec, top_k=int(top_k or settings.rag_top_k))
     if hits:
         top = hits[0][1]
-
-        if q.ask_count and isinstance(top.get("qty"), int):
-            return (
-                f"{top['name']} is available. We have {top['qty']} in stock."
-                if top["qty"] > 0
-                else f"{top['name']} is currently sold out."
-            )
-        if q.ask_price and top.get("price") is not None:
-            return f"{top['name']} costs ${float(top['price']):.2f} plus tax."
-
-        alts = [m["name"] for _, m in hits[1:3]]
-        draft = _format_item_sentence(top)
-        if alts:
-            draft += f" You might also like: {', '.join(alts)}."
-
-        ctx = "\n".join([_format_item_sentence(m) for _, m in hits])
-        better = _rewrite_with_llm(ctx, question, draft)
-        return better or draft
+        # Always get fresh data from Firestore for accurate stock/price
+        response = _format_item_response(top)
+        return response
 
     # 3) generic availability fallback (short, friendly list)
     metas = s.metas
@@ -335,16 +408,15 @@ def answer_from_items(
     better = _rewrite_with_llm("\n".join(lines), question, draft)
     return better or draft
 
-from openai import OpenAI
-client = OpenAI(api_key=settings.openai_api_key)
-
 def extract_order_lines_with_gpt(
     user_text: str,
     known_items: list[dict[str, Any]],
+    conversation_context: str = "",
 ) -> list[dict[str, Any]]:
     """
     Use GPT-3.5 to turn free-text into a list of {name, qty} lines.
     Returns [] if it can't confidently detect an order.
+    Uses conversation context to understand references like "i want 3" after discussing an item.
     """
     # keep only item names so the model snaps to your real menu
     menu_names = [it.get("name", "") for it in known_items if it.get("name")]
@@ -355,15 +427,28 @@ def extract_order_lines_with_gpt(
         "Your job is ONLY to extract what they are trying to order.\n"
         "Use the MENU list to match item names. If nothing is being ordered, "
         "return an empty list.\n"
+        "Use the CONVERSATION HISTORY to understand context (e.g., if user says 'i want 3' "
+        "after asking about 'honey chicken', they mean 3 honey chicken).\n"
         "Always respond with pure JSON: {\"lines\":[{\"name\":...,\"qty\":...}, ...]}."
     )
 
     menu_str = ", ".join(menu_names)
+
+    # Include conversation context if available
+    context_section = ""
+    if conversation_context:
+        context_section = f"CONVERSATION HISTORY:\n{conversation_context}\n\n"
+
     prompt = (
         f"MENU ITEMS: {menu_str}\n\n"
-        f"USER: {user_text}\n\n"
+        f"{context_section}"
+        f"CURRENT USER MESSAGE: {user_text}\n\n"
         "Return JSON only."
     )
+
+    client = _get_llm_client()
+    if client is None:
+        return []
 
     try:
         resp = client.chat.completions.create(
@@ -378,7 +463,6 @@ def extract_order_lines_with_gpt(
     except Exception:
         return []
 
-    import json
     try:
         data = json.loads(raw)
     except Exception:

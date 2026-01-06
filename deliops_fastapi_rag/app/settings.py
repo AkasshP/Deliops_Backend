@@ -87,6 +87,20 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("STRIPE_PUBLISHABLE_KEY",),
     )
 
+    # --- Admin Authentication ---
+    admin_username: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ADMIN_USERNAME",),
+    )
+    admin_password: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ADMIN_PASSWORD",),
+    )
+    admin_token: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("ADMIN_TOKEN",),
+    )
+
     @property
     def cors_origins(self) -> List[str]:
         return _parse_cors(self.cors_origins_raw)

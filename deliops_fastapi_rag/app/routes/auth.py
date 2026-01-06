@@ -1,27 +1,39 @@
 from __future__ import annotations
-import os
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from ..settings import settings
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Env-based credentials (simple, no JWT to keep it minimal)
-ADMIN_USER = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASS = os.getenv("ADMIN_PASSWORD", "admin123")
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "ok-admin")  # what frontend stores
+
+def _check_auth_configured() -> None:
+    """Raise an error if auth credentials are not configured."""
+    if not all([settings.admin_username, settings.admin_password, settings.admin_token]):
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication not configured. Set ADMIN_USERNAME, ADMIN_PASSWORD, and ADMIN_TOKEN in .env file."
+        )
+
 
 class LoginBody(BaseModel):
     username: str
     password: str
 
+
 @router.post("/login")
 def login(body: LoginBody):
-    if body.username == ADMIN_USER and body.password == ADMIN_PASS:
-        return {"token": ADMIN_TOKEN}
-    raise HTTPException(status_code=401, detail="invalid credentials")
+    """Authenticate admin user and return token."""
+    _check_auth_configured()
+    if body.username == settings.admin_username and body.password == settings.admin_password:
+        return {"token": settings.admin_token}
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
 
 @router.get("/me")
 def me(token: str):
-    if token == ADMIN_TOKEN:
+    """Validate admin token."""
+    _check_auth_configured()
+    if token == settings.admin_token:
         return {"ok": True}
-    raise HTTPException(status_code=401, detail="invalid token")
+    raise HTTPException(status_code=401, detail="Invalid token")

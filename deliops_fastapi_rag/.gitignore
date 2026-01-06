@@ -1,0 +1,54 @@
+# --- Python / FastAPI ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+*.cpython-*
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Local config / secrets
+.env
+.env.*
+!.env.example
+serviceAccount.json
+
+# App data / generated indexes
+app/vectorstore/index/
+data/index/
+data/cache/
+app/vectorstore/**/index*/        # safety net
+
+# Build / dist
+build/
+dist/
+wheelhouse/
+
+# Test & tooling caches
+.pytest_cache/
+.coverage*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Nextjs/Node (if present in this repo)
+.next/
+out/
+node_modules/
+.vercel/
