@@ -1,6 +1,7 @@
 # app/services/firebase.py
 from __future__ import annotations
 
+import json
 import os
 from functools import lru_cache
 
@@ -14,14 +15,22 @@ def ensure_firestore() -> firestore.Client:
     Return a Firestore client, initializing the Firebase app exactly once.
 
     - Safe to call many times (and from many threads).
-    - Uses GOOGLE_APPLICATION_CREDENTIALS if present, or ADC otherwise.
+    - Checks (in order):
+      1. GOOGLE_CREDENTIALS_JSON env var (raw JSON string — for cloud deploys)
+      2. GOOGLE_APPLICATION_CREDENTIALS file path (local dev)
+      3. Application Default Credentials (ADC)
     """
 
     if not firebase_admin._apps:
-        # First-time init
-        sa_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         try:
-            if sa_path and os.path.isfile(sa_path):
+            cred_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+            sa_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+
+            if cred_json:
+                info = json.loads(cred_json)
+                cred = credentials.Certificate(info)
+                firebase_admin.initialize_app(cred)
+            elif sa_path and os.path.isfile(sa_path):
                 cred = credentials.Certificate(sa_path)
                 firebase_admin.initialize_app(cred)
             else:
