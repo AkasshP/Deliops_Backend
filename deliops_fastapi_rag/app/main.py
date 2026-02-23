@@ -12,8 +12,11 @@ from .routes import items, chat, admin, auth, orders, feedback
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize resources on startup."""
-    ensure_index_ready(startup=True)
-    print("[startup] Vector index ready.")
+    result = ensure_index_ready(startup=True)
+    if result is not None:
+        print("[startup] Vector index ready.")
+    else:
+        print("[startup] App started WITHOUT vector index (Firebase unavailable).")
     yield
 
 

@@ -195,9 +195,9 @@ def ensure_index_ready(startup: bool = False) -> SimpleStore:
     except Exception:
         traceback.print_exc()
         if startup:
-            # During startup, fail fast so you see the error and fix it
-            raise
-        # During lazy use (inside /chat) you may want to re-raise as well:
+            print("[startup] WARNING: Could not build vector index (Firebase may be unavailable). "
+                  "The app will start but /chat and /items may fail until Firebase is reachable.")
+            return None
         raise
 
 # ---------- LLM “polish” using OpenAI ----------
