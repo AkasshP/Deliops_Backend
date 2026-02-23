@@ -1,13 +1,23 @@
 # app/main.py
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .settings import settings
 from .services.rag import ensure_index_ready
-from .routes import items, chat, admin, auth, orders
-from .routes.feedback import router as feedback_router
+from .routes import items, chat, admin, auth, orders, feedback
 
-app = FastAPI(title="DeliOps FastAPI Backend")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize resources on startup."""
+    ensure_index_ready(startup=True)
+    print("[startup] Vector index ready.")
+    yield
+
+
+app = FastAPI(title="DeliOps FastAPI Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,17 +32,10 @@ app.include_router(items.router)
 app.include_router(chat.router)
 app.include_router(admin.router)
 app.include_router(auth.router)
-app.include_router(feedback_router)
+app.include_router(feedback.router)
 app.include_router(orders.router)
 
 
 @app.get("/")
 def root():
     return {"message": "DeliOps API is running"}
-
-
-@app.on_event("startup")
-def _startup_refresh_index():
-    """Initialize the vector index on application startup."""
-    ensure_index_ready(startup=True)
-    print("[startup] Vector index ready.")

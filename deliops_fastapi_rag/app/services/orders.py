@@ -1,5 +1,7 @@
 from __future__ import annotations
-import os, time, uuid
+import os
+import time
+import uuid
 from typing import Dict, Any, List
 import stripe
 from google.cloud import firestore 
@@ -15,9 +17,14 @@ stripe.api_key = settings.stripe_secret_key
 
 TAX_RATE = float(os.environ.get("TAX_RATE", "0.0"))  # e.g., 0.0625
 
-def _now(): return time.time()
-def _oid(): return uuid.uuid4().hex[:24]
-def _cents(usd: float) -> int: return int(round(usd * 100))
+def _now():
+    return time.time()
+
+def _oid():
+    return uuid.uuid4().hex[:24]
+
+def _cents(usd: float) -> int:
+    return int(round(usd * 100))
 
 def _load_items_map(ids: List[str]) -> Dict[str, Dict[str, Any]]:
     db = ensure_firestore()
@@ -117,13 +124,18 @@ def finalize_paid_and_decrement(order_id: str, payment_intent_id: str):
 def get_order(order_id: str):
     db = ensure_firestore()
     s = db.collection("orders").document(order_id).get()
-    if not s.exists: return None
-    d = s.to_dict() or {}; d["id"]=s.id; return d
+    if not s.exists:
+        return None
+    d = s.to_dict() or {}
+    d["id"] = s.id
+    return d
 
 def list_orders():
     db = ensure_firestore()
     snaps = db.collection("orders").order_by("createdAt", direction="DESCENDING").limit(200).stream()
-    out=[]
+    out = []
     for s in snaps:
-        d = s.to_dict() or {}; d["id"]=s.id; out.append(d)
+        d = s.to_dict() or {}
+        d["id"] = s.id
+        out.append(d)
     return out

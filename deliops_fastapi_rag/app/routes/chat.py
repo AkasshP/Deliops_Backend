@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from collections import OrderedDict
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..services.nlu import parse_query

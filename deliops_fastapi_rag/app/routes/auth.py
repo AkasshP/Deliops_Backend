@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ..settings import settings
@@ -31,7 +31,7 @@ def login(body: LoginBody):
 
 
 @router.get("/me")
-def me(token: str):
+def me(token: str = Query(...)):
     """Validate admin token."""
     _check_auth_configured()
     if token == settings.admin_token:
