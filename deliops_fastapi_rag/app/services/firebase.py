@@ -25,16 +25,19 @@ def ensure_firestore() -> firestore.Client:
         try:
             cred_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
             sa_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            project_id = os.environ.get("FIREBASE_PROJECT_ID")
+
+            options = {"projectId": project_id} if project_id else {}
 
             if cred_json:
                 info = json.loads(cred_json)
                 cred = credentials.Certificate(info)
-                firebase_admin.initialize_app(cred)
+                firebase_admin.initialize_app(cred, options)
             elif sa_path and os.path.isfile(sa_path):
                 cred = credentials.Certificate(sa_path)
-                firebase_admin.initialize_app(cred)
+                firebase_admin.initialize_app(cred, options)
             else:
-                firebase_admin.initialize_app()
+                firebase_admin.initialize_app(options=options)
         except ValueError:
             # If another request initialized between our check and this call,
             # just ignore the "app already exists" error and continue.
