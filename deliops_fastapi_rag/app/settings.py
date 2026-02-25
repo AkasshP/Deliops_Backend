@@ -3,7 +3,6 @@ from typing import List, Optional
 from pydantic import Field, AliasChoices
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import json
-import os
 
 
 def _parse_cors(v: Optional[str | List[str]]) -> List[str]:
@@ -43,17 +42,7 @@ class Settings(BaseSettings):
         default=None, validation_alias=AliasChoices("CORS_ORIGINS",)
     )
 
-    # --- Firebase ---
-    firebase_project_id: str = Field(
-        default="deliops",
-        validation_alias=AliasChoices("FIREBASE_PROJECT_ID",)
-    )
-    google_application_credentials: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("GOOGLE_APPLICATION_CREDENTIALS",)
-    )
-
-    # --- Hugging Face / RAG ---
+    # --- OpenAI / RAG ---
     openai_api_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("OPENAI_API_KEY"),
@@ -62,22 +51,34 @@ class Settings(BaseSettings):
         default="gpt-3.5-turbo",
         validation_alias=AliasChoices("OPENAI_MODEL"),
     )
-    # accept either EMBED_MODEL or RAG_EMBED_MODEL
     embed_model: str = Field(
-    default="text-embedding-3-small",
-    validation_alias=AliasChoices("EMBED_MODEL", "RAG_EMBED_MODEL"),
+        default="text-embedding-3-small",
+        validation_alias=AliasChoices("EMBED_MODEL", "RAG_EMBED_MODEL"),
     )
-
     rag_top_k: int = Field(
         default=4, validation_alias=AliasChoices("RAG_TOP_K",)
     )
-
-    # --- Vector index location ---
-    index_dir: str = Field(
-        default="/tmp/index",
-        validation_alias=AliasChoices("INDEX_DIR",),
+    # --- OpenRouter (Agent LLM) ---
+    openrouter_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENROUTER_API_KEY",),
+    )
+    openrouter_model: str = Field(
+        default="anthropic/claude-3.5-sonnet",
+        validation_alias=AliasChoices("OPENROUTER_MODEL",),
     )
 
+    # --- Postgres / pgvector ---
+    database_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_URL",),
+    )
+    rag_similarity_threshold: float = Field(
+        default=0.75,
+        validation_alias=AliasChoices("RAG_SIMILARITY_THRESHOLD",),
+    )
+
+    # --- Stripe ---
     stripe_secret_key: Optional[str] = Field(
         default=None,
         validation_alias=AliasChoices("STRIPE_SECRET_KEY", "STRIPE_API_KEY"),
@@ -108,7 +109,3 @@ class Settings(BaseSettings):
 
 # singleton
 settings = Settings()
-
-# Export GCP creds for firebase_admin if provided
-if settings.google_application_credentials:
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.google_application_credentials

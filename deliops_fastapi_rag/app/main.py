@@ -6,18 +6,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .settings import settings
 from .services.rag import ensure_index_ready
+from .db import close_pool
 from .routes import items, chat, admin, auth, orders, feedback
+from .agent.agent_router import router as agent_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize resources on startup."""
-    result = ensure_index_ready(startup=True)
-    if result is not None:
-        print("[startup] Vector index ready.")
-    else:
-        print("[startup] App started WITHOUT vector index (Firebase unavailable).")
+    """Initialize resources on startup, clean up on shutdown."""
+    try:
+        await ensure_index_ready(startup=True)
+        print("[startup] pgvector index ready.")
+    except Exception as e:
+        print(f"[startup] App started WITHOUT pgvector index: {e}")
     yield
+    await close_pool()
 
 
 app = FastAPI(title="DeliOps FastAPI Backend", lifespan=lifespan)
@@ -37,6 +40,7 @@ app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(feedback.router)
 app.include_router(orders.router)
+app.include_router(agent_router)
 
 
 @app.get("/")

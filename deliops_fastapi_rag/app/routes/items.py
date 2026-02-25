@@ -65,13 +65,13 @@ class ItemPatch(BaseModel):
 
 @router.get("", response_model=List[ItemOut])
 @router.get("/", response_model=List[ItemOut])
-def list_items_endpoint(public: Optional[bool] = Query(None),
-                        active: Optional[bool] = Query(None)):
-    return [ItemOut(**i) for i in list_items(public=public, active=active)]
+async def list_items_endpoint(public: Optional[bool] = Query(None),
+                              active: Optional[bool] = Query(None)):
+    return [ItemOut(**i) for i in await list_items(public=public, active=active)]
 
 @router.get("/{item_id}", response_model=ItemOut)
-def get_item_endpoint(item_id: str):
-    item = get_item(item_id)
+async def get_item_endpoint(item_id: str):
+    item = await get_item(item_id)
     if not item:
         raise HTTPException(status_code=404, detail="item not found")
     return ItemOut(**item)
@@ -79,20 +79,20 @@ def get_item_endpoint(item_id: str):
 # IMPORTANT: allow both "" and "/" for POST (your file had two identical "/" decorators)
 @router.post("", response_model=ItemOut)
 @router.post("/", response_model=ItemOut)
-def create_item_endpoint(payload: ItemIn):
+async def create_item_endpoint(payload: ItemIn):
     try:
-        created = create_item(payload.model_dump(exclude_unset=True))
+        created = await create_item(payload.model_dump(exclude_unset=True))
         return ItemOut(**created)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.patch("/{item_id}", response_model=ItemOut)
-def update_item_endpoint(item_id: str, payload: ItemPatch):
+async def update_item_endpoint(item_id: str, payload: ItemPatch):
     data = payload.model_dump(exclude_unset=True, exclude_none=True)
-    updated = update_item(item_id, data)
+    updated = await update_item(item_id, data)
     return ItemOut(**updated)
 
 @router.delete("/{item_id}")
-def delete_item_endpoint(item_id: str):
-    delete_item(item_id)
+async def delete_item_endpoint(item_id: str):
+    await delete_item(item_id)
     return {"ok": True}

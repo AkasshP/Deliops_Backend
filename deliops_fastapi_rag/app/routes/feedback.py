@@ -18,12 +18,12 @@ class FeedbackOut(FeedbackIn):
     createdAt: Optional[str] = None
 
 @router.post("", response_model=FeedbackOut)
-def feedback_create(body: FeedbackIn):
+async def feedback_create(body: FeedbackIn):
     try:
-        return create_feedback(body.model_dump(exclude_unset=True))
+        return await create_feedback(body.model_dump(exclude_unset=True))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("", response_model=List[FeedbackOut])
-def feedback_list():
-    return list_feedback()
+async def feedback_list():
+    return await list_feedback()

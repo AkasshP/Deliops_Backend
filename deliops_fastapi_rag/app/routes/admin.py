@@ -1,26 +1,27 @@
 from __future__ import annotations
 from fastapi import APIRouter
 
-from ..services.rag import INDEX_DIR, ensure_index_ready, build_index
-from ..services.rag import _get_store  # local import for status details
+from ..services.rag import build_index
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+
 @router.get("/index-status")
-def index_status():
-    """
-    Helpful for debugging: shows whether the vector index is loaded and how many items it has.
-    (No auth here; add your auth dependency if you want this locked down.)
-    """
-    ensure_index_ready()
-    s = _get_store()
-    ready = (s.emb is not None) and (len(s.metas) > 0)
-    return {"ready": ready, "count": len(s.metas), "dir": str(INDEX_DIR)}
+async def index_status():
+    """Check pgvector index status by running a simple count query."""
+    from ..db import get_pool
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT count(*) AS cnt FROM item_embeddings")
+            count = row["cnt"] if row else 0
+        return {"ready": count > 0, "count": count, "backend": "pgvector"}
+    except Exception as e:
+        return {"ready": False, "count": 0, "backend": "pgvector", "error": str(e)}
+
 
 @router.post("/reindex")
-def reindex():
-    """
-    Manually rebuild the index from Firestore. Use from your admin UI.
-    """
-    result = build_index()
+async def reindex():
+    """Manually rebuild the pgvector index from Postgres items."""
+    result = await build_index()
     return {"ok": True, **result}

@@ -13,8 +13,8 @@ from ..services.nlu import parse_query
 from ..services.rag import (
     answer_from_items,
     ensure_index_ready,
-    _get_store,
     extract_order_lines_with_gpt,
+    _name_map,
 )
 from ..services.orders import create_order_with_intent
 
@@ -109,22 +109,21 @@ class OrderStartIn(BaseModel):
 
 # ---------- Helpers ----------
 
-def _order_lines_from_gpt(user_text: str, history: Optional[List[ChatMessage]] = None) -> List[OrderLineIn]:
+async def _order_lines_from_gpt(user_text: str, history: Optional[List[ChatMessage]] = None) -> List[OrderLineIn]:
     """
     Use GPT to interpret the user's sentence as an order and
-    map item names to itemIds from the vectorstore metas.
+    map item names to itemIds from the in-memory name_map.
     Returns [] if nothing could be parsed confidently.
     """
-    ensure_index_ready()
-    store = _get_store()
-    metas = store.metas or []
+    await ensure_index_ready()
+    metas = list(_name_map.values())
 
     # Build context from history if available
     context = ""
     if history:
-        context = "\n".join([f"{m.role}: {m.content}" for m in history[-6:]])  # Last 6 messages
+        context = "\n".join([f"{m.role}: {m.content}" for m in history[-6:]])
 
-    parsed = extract_order_lines_with_gpt(user_text, metas, context)
+    parsed = await extract_order_lines_with_gpt(user_text, metas, context)
     if not parsed:
         return []
 
@@ -147,7 +146,7 @@ def _order_lines_from_gpt(user_text: str, history: Optional[List[ChatMessage]] =
 # ---------- Route ----------
 
 @router.post("", response_model=ChatOut)
-def chat_endpoint(body: ChatIn) -> ChatOut:
+async def chat_endpoint(body: ChatIn) -> ChatOut:
     """
     Main chat endpoint used by the guest UI.
 
@@ -173,7 +172,7 @@ def chat_endpoint(body: ChatIn) -> ChatOut:
 
     # 1) Treat clear "order / confirm / place" requests as order intents
     if q.is_order_request:
-        order_lines = _order_lines_from_gpt(body.message, history)
+        order_lines = await _order_lines_from_gpt(body.message, history)
 
         if order_lines:
             order_in = OrderStartIn(
@@ -181,7 +180,7 @@ def chat_endpoint(body: ChatIn) -> ChatOut:
                 customerEmail=None,
                 lines=order_lines,
             )
-            intent = create_order_with_intent(order_in)
+            intent = await create_order_with_intent(order_in)
 
             response_msg = "I've placed your order. Please complete the payment below to confirm."
             _sessions.add_message(session_id, "assistant", response_msg)
@@ -205,6 +204,6 @@ def chat_endpoint(body: ChatIn) -> ChatOut:
         )
 
     # 2) Normal RAG answer
-    reply = answer_from_items(body.message)
+    reply = await answer_from_items(body.message)
     _sessions.add_message(session_id, "assistant", reply)
     return ChatOut(mode="chat", message=reply, session_id=session_id)
