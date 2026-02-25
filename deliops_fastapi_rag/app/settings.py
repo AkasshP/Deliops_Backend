@@ -42,17 +42,13 @@ class Settings(BaseSettings):
         default=None, validation_alias=AliasChoices("CORS_ORIGINS",)
     )
 
-    # --- OpenAI / RAG ---
-    openai_api_key: Optional[str] = Field(
+    # --- Hugging Face (embeddings) ---
+    hf_api_token: Optional[str] = Field(
         default=None,
-        validation_alias=AliasChoices("OPENAI_API_KEY"),
-    )
-    openai_model: str = Field(
-        default="gpt-3.5-turbo",
-        validation_alias=AliasChoices("OPENAI_MODEL"),
+        validation_alias=AliasChoices("HF_API_TOKEN", "HUGGINGFACE_TOKEN"),
     )
     embed_model: str = Field(
-        default="text-embedding-3-small",
+        default="sentence-transformers/all-MiniLM-L6-v2",
         validation_alias=AliasChoices("EMBED_MODEL", "RAG_EMBED_MODEL"),
     )
     rag_top_k: int = Field(

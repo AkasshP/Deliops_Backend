@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS item_embeddings (
     price        NUMERIC(10, 2),
     in_stock     BOOLEAN     NOT NULL DEFAULT TRUE,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    embedding    vector(1536) NOT NULL
+    embedding    vector(384) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_item_embeddings_cosine

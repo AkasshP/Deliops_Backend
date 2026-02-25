@@ -6,16 +6,17 @@ from unittest.mock import MagicMock, AsyncMock
 import os
 
 # Set dummy env vars BEFORE any app imports
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
+os.environ.setdefault("HF_API_TOKEN", "test-key")
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/testdb")
 
 # Stub stripe
 sys.modules.setdefault("stripe", MagicMock())
 
-# Stub openai
+# Stub openai + huggingface_hub
 _openai_mod = MagicMock()
 sys.modules.setdefault("openai", _openai_mod)
+sys.modules.setdefault("huggingface_hub", MagicMock())
 
 # Stub asyncpg so we never touch a real database
 _asyncpg_mod = MagicMock()
@@ -78,7 +79,7 @@ def _patch_embeddings(monkeypatch):
     """Patch embed_text / embed_texts to return deterministic vectors."""
     def _fake_embed_texts(texts):
         rng = np.random.RandomState(42)
-        return rng.randn(len(texts), 1536).astype(np.float32)
+        return rng.randn(len(texts), 384).astype(np.float32)
 
     def _fake_embed_text(text):
         return _fake_embed_texts([text])[0]
@@ -115,7 +116,7 @@ def _patch_rag_globals(monkeypatch):
 
     # Populate fake pgvector DB with embeddings
     rng = np.random.RandomState(99)
-    vecs = rng.randn(len(fake_metas), 1536).astype(np.float32)
+    vecs = rng.randn(len(fake_metas), 384).astype(np.float32)
     _fake_items_db.clear()
     for item, emb in zip(fake_metas, vecs):
         _fake_items_db.append({**item, "_embedding": emb.tolist()})
