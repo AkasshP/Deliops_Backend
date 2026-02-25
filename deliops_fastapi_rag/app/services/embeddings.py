@@ -12,10 +12,13 @@ EMBED_MODEL = settings.embed_model or "text-embedding-3-small"
 # text-embedding-3-small has 1536 dims; used only for the empty-case shortcut
 EMBED_DIM = 1536
 
-if not settings.openai_api_key:
-    raise RuntimeError("OPENAI_API_KEY / openai_api_key is not set in settings")
+# Use OpenRouter (preferred) or OpenAI directly
+_api_key = settings.openrouter_api_key or settings.openai_api_key
+if not _api_key:
+    raise RuntimeError("OPENROUTER_API_KEY or OPENAI_API_KEY must be set")
 
-_client = OpenAI(api_key=settings.openai_api_key)
+_base_url = "https://openrouter.ai/api/v1" if settings.openrouter_api_key else None
+_client = OpenAI(api_key=_api_key, **({"base_url": _base_url} if _base_url else {}))
 
 
 def embed_texts(texts: List[str]) -> np.ndarray:

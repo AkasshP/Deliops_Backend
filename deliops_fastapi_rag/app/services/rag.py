@@ -33,9 +33,13 @@ def _get_llm_client() -> Optional[OpenAI]:
     global _llm_client
     if _llm_client is not None:
         return _llm_client
-    if not settings.openai_api_key:
+    api_key = settings.openrouter_api_key or settings.openai_api_key
+    if not api_key:
         return None
-    _llm_client = OpenAI(api_key=settings.openai_api_key)
+    kwargs = {"api_key": api_key}
+    if settings.openrouter_api_key:
+        kwargs["base_url"] = "https://openrouter.ai/api/v1"
+    _llm_client = OpenAI(**kwargs)
     return _llm_client
 
 
@@ -231,7 +235,7 @@ def _rewrite_with_llm(context: str, user: str, draft: str) -> Optional[str]:
 
     try:
         resp = client.chat.completions.create(
-            model=settings.openai_model,
+            model=settings.openrouter_model or settings.openai_model,
             messages=messages,
             temperature=0.3,
             max_tokens=200,
@@ -415,7 +419,7 @@ async def extract_order_lines_with_gpt(
 
     try:
         resp = client.chat.completions.create(
-            model=settings.openai_model or "gpt-3.5-turbo",
+            model=settings.openrouter_model or settings.openai_model or "gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
