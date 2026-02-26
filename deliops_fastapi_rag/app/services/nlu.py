@@ -39,8 +39,11 @@ _client: Optional[OpenAI] = None
 
 def _get_client() -> Optional[OpenAI]:
     global _client
-    if _client is None and settings.openai_api_key:
-        _client = OpenAI(api_key=settings.openai_api_key)
+    if _client is None and settings.openrouter_api_key:
+        _client = OpenAI(
+            api_key=settings.openrouter_api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
     return _client
 
 
@@ -75,7 +78,7 @@ Return ONLY valid JSON, no explanation."""
 
     try:
         resp = client.chat.completions.create(
-            model=settings.openai_model or "gpt-3.5-turbo",
+            model=settings.openrouter_model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": t},
