@@ -11,10 +11,7 @@ EMBED_DIM = 384  # all-MiniLM-L6-v2 outputs 384 dims
 if not settings.hf_api_token:
     raise RuntimeError("HF_API_TOKEN is not set — get a free token at https://huggingface.co/settings/tokens")
 
-_client = InferenceClient(
-    token=settings.hf_api_token,
-    api_url="https://router.huggingface.co",
-)
+_client = InferenceClient(token=settings.hf_api_token)
 
 
 def embed_texts(texts: List[str]) -> np.ndarray:
