@@ -1,11 +1,10 @@
-FROM python:3.11-slim
+FROM public.ecr.aws/lambda/python:3.11
 
-WORKDIR /app
+WORKDIR ${LAMBDA_TASK_ROOT}
 
 COPY deliops_fastapi_rag/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt --target "${LAMBDA_TASK_ROOT}"
 
 COPY deliops_fastapi_rag/ .
 
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["app.lambda_handler.handler"]

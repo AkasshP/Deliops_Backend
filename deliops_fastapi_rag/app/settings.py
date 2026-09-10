@@ -74,6 +74,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("RAG_SIMILARITY_THRESHOLD",),
     )
 
+    # --- Deepgram ---
+    deepgram_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("DEEPGRAM_API_KEY",),
+    )
+
     # --- Stripe ---
     stripe_secret_key: Optional[str] = Field(
         default=None,

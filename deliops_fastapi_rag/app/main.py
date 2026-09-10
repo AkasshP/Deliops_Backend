@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .settings import settings
 from .services.rag import ensure_index_ready
 from .db import close_pool
-from .routes import items, chat, admin, auth, orders, feedback
+from .routes import items, chat, admin, auth, orders, feedback, transcribe
 from .agent.agent_router import router as agent_router
 
 
@@ -40,6 +40,7 @@ app.include_router(admin.router)
 app.include_router(auth.router)
 app.include_router(feedback.router)
 app.include_router(orders.router)
+app.include_router(transcribe.router)
 app.include_router(agent_router)
 
 
