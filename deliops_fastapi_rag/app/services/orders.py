@@ -13,9 +13,8 @@ from fastapi import HTTPException
 from ..db import get_pool
 from ..settings import settings
 
-if not settings.stripe_secret_key:
-    raise RuntimeError("STRIPE_SECRET_KEY is not set in environment")
-stripe.api_key = settings.stripe_secret_key
+if settings.stripe_secret_key:
+    stripe.api_key = settings.stripe_secret_key
 
 TAX_RATE = float(os.environ.get("TAX_RATE", "0.0"))  # e.g., 0.0625
 
@@ -148,6 +147,9 @@ async def create_order_with_intent(body) -> Dict[str, Any]:
 
 
 async def finalize_paid_and_decrement(order_id: str, payment_intent_id: str):
+    if not settings.stripe_secret_key:
+        raise HTTPException(status_code=503, detail="Payments not configured")
+
     pi = stripe.PaymentIntent.retrieve(payment_intent_id)
     if (pi.metadata or {}).get("orderId") != order_id:
         raise ValueError("PI/order mismatch")
